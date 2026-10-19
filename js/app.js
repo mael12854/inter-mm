@@ -12,6 +12,68 @@
   let db = DATA.load();
   const save = () => DATA.save(db);
 
+  /* ——— Supabase : conversion des données et synchronisation ——— */
+  const CL = window.CLOUD && window.CLOUD.on ? window.CLOUD : { on: false, queue() {}, flush: async () => {}, pending: () => 0, state: () => 'local', uid: () => Date.now().toString(16) + Math.random().toString(16).slice(2) };
+  const articleRow = p => ({ id: p.id, rayon: p.rayon, ppp: p.ppp, nom: p.name, prix: p.price, vente: p.unit, ean: p.ean || null, modifie_le: new Date().toISOString() });
+  const staffRow = (s, i) => ({ id: s.id, nom: s.name, role: s.role, pin: s.pin, badge: s.badge, couleur: s.color, responsable: !!s.manager, ordre: i + 1 });
+  const isSeedId = id => /^p\d+$/.test(id) && Number(id.slice(1)) <= 42;
+  function ticketRow(t, statut) {
+    const paid = statut === 'paye', tt = totals(t);
+    const sum = type => t.payments.filter(x => x.type === type).reduce((a, x) => a + x.amount, 0);
+    const c = t.card != null ? db.cards[t.card] : null;
+    if (!t.id) t.id = CL.uid();
+    return {
+      id: t.id, no: t.no, statut, ferme_le: new Date(t.closed || Date.now()).toISOString(), jour: DATA.today(),
+      caissier: t.cashier || (user() || {}).name || null, caisse: t.caisse || db.settings.caisse,
+      total: paid ? tt.total : 0, articles: paid ? tt.items : 0, remises: paid ? tt.disc : 0, lignes_annulees: paid ? tt.cancelled : 0,
+      especes: paid ? sum('especes') : 0, carte: paid ? sum('carte') : 0,
+      num_carte: paid && c ? c.num : null, nom_carte: c ? c.name : null, tampons: paid ? (t.stampsAdded || 0) : 0, detail: t
+    };
+  }
+  function applyCloud(d) {
+    if (!db.cloudSynced) {
+      // Premier passage de cet appareil : on envoie les articles et cartes créés avant Supabase.
+      const ids = new Set(d.articles.map(a => a.id)), nums = new Set(d.cartes.map(c => c.num));
+      db.products.filter(x => !ids.has(x.id) && !isSeedId(x.id)).forEach(x => { const row = articleRow(x); CL.queue({ kind: 'upsert', table: 'articles', row }); d.articles.push(row); });
+      Object.values(db.cards).filter(c => !nums.has(c.num) && c.num !== 42).forEach(c => {
+        const row = { num: c.num, nom: c.name, tampons: c.stamps, surprises: c.surprises || 0 };
+        CL.queue({ kind: 'insertIgnore', table: 'cartes', row }); d.cartes.push(row);
+      });
+      db.cloudSynced = true;
+    }
+    db.products = d.articles.map(a => ({ id: a.id, rayon: a.rayon, ppp: a.ppp, name: a.nom, price: a.prix, unit: a.vente, ean: a.ean }));
+    db.cards = {};
+    d.cartes.forEach(c => { db.cards[c.num] = { num: c.num, name: c.nom, stamps: c.tampons, surprises: c.surprises }; });
+    if (d.personnel.length) db.staff = d.personnel.map(x => ({ id: x.id, name: x.nom, role: x.role, pin: x.pin, badge: x.badge, color: x.couleur, manager: x.responsable }));
+    const R = {}; d.reglages.forEach(r => { R[r.cle] = r.valeur; });
+    if (R.caisse) db.settings.caisse = R.caisse;
+    if (R.fond != null) db.settings.fond = Number(R.fond);
+    const paid = d.ouverts.filter(t => t.statut === 'paye');
+    db.day = {
+      date: d.ouverts.length ? d.ouverts[0].jour : DATA.today(), fond: db.settings.fond,
+      sales: paid.map(t => ({ no: t.no, at: Date.parse(t.ferme_le), total: t.total, items: t.articles, disc: t.remises, cancelled: t.lignes_annulees, cash: t.especes, card: t.carte, cashier: t.caissier })),
+      voided: d.ouverts.length - paid.length, drawer: Number(R.tiroir || 0)
+    };
+    db.history = d.recents.filter(t => t.statut === 'paye' && t.detail).map(t => t.detail);
+    db.ticketNo = Math.max(db.ticketNo || 0, 0, ...d.recents.map(t => t.no));
+    if (db.user && !db.staff.some(x => x.id === db.user)) db.user = null;
+    save();
+  }
+  let syncing = false;
+  async function sync() {
+    if (!CL.on || syncing) return;
+    syncing = true;
+    try {
+      const d = await CL.pull();
+      if (d) {
+        applyCloud(d);
+        const typing = document.activeElement && document.activeElement.matches && document.activeElement.matches('input, select');
+        if (!S.modal && !typing && ['main', 'login', 'manager', 'catalog', 'label'].includes(S.screen)) render();
+      }
+    } catch (e) { console.warn('Synchronisation impossible', e); }
+    finally { syncing = false; }
+  }
+
   const S = {
     screen: db.user ? 'main' : 'login',
     login: { who: null, pin: '', shake: false },
@@ -20,7 +82,7 @@
     produce: { rayon: 1, pid: null, entry: '', qty: 1 },
     cash: { received: 0 },
     done: null,
-    catRayon: 0, catQuery: '',
+    catRayon: 0, catQuery: '', shop: {},
     label: { tab: 'produit', rayon: 1, pid: null, shelf: 1, card: 42, copies: 1 }
   };
 
@@ -28,7 +90,7 @@
   const user = () => db.staff.find(s => s.id === db.user) || null;
   function newTicket() {
     db.ticketNo += 1;
-    return { no: db.ticketNo, lines: [], tdisc: 0, tdiscNote: '', card: null, payments: [], returnNext: false, opened: Date.now() };
+    return { id: CL.uid(), no: db.ticketNo, lines: [], tdisc: 0, tdiscNote: '', card: null, payments: [], returnNext: false, opened: Date.now() };
   }
   function cur() {
     if (!db.current) { db.current = newTicket(); save(); }
@@ -139,7 +201,10 @@
 
   function attachCard(n) {
     let c = db.cards[n];
-    if (!c) { c = db.cards[n] = { num: n, name: 'Copain n° ' + pad4(n), stamps: 0, surprises: 0 }; }
+    if (!c) {
+      c = db.cards[n] = { num: n, name: 'Copain n° ' + pad4(n), stamps: 0, surprises: 0 };
+      CL.queue({ kind: 'insertIgnore', table: 'cartes', row: { num: n, nom: c.name } });
+    }
     cur().card = n; save();
     SOUND.copain();
     render();
@@ -329,6 +394,7 @@
     S.login = { who: null, pin: '', shake: false };
     S.screen = 'main'; S.modal = null;
     save();
+    sync();
     SOUND.copain();
     render();
     toast(`Bonjour ${s.name} !`);
@@ -393,6 +459,7 @@
     const sum = type => t.payments.filter(p => p.type === type).reduce((s, p) => s + p.amount, 0);
     db.day.sales.push({ no: t.no, at: t.closed, total: tt.total, items: tt.items, disc: tt.disc, cancelled: tt.cancelled, cash: sum('especes'), card: sum('carte'), cashier: t.cashier });
     db.history = [t].concat(db.history || []).slice(0, 30);
+    CL.queue({ kind: 'rpc', fn: 'enregistrer_ticket', args: { p: ticketRow(t, 'paye') } });
     db.current = null;
     S.done = t; S.sel = -1; S.saisie = ''; S.mult = null;
     S.screen = 'done'; S.modal = null;
@@ -493,7 +560,7 @@
     return `<div class="topbar"><span class="logo on-dark"><i></i><i></i></span><strong>${esc(db.settings.caisse)}</strong>
       <button class="user" data-a="logout">${u && u.manager ? 'Responsable' : 'Caissier'} : ${esc(u ? u.name : '—')}</button>
       <span class="dim">Ticket n° ${pad4(t.no)}</span>
-      <span class="spacer"></span><span class="status" id="st-scan">Douchette</span><span class="status">Imprimante</span><span class="clock" id="clock">${hhmm()}</span></div>`;
+      <span class="spacer"></span><span class="status" id="st-scan">Douchette</span><span class="status">Imprimante</span>${CL.on ? `<span class="status cloud" id="st-cloud" data-state="${CL.state()}">Supabase</span>` : ''}<span class="clock" id="clock">${hhmm()}</span></div>`;
   }
 
   /* Catalogue : liste filtrée par rayon et par recherche (sans tenir compte des accents). */
@@ -516,7 +583,38 @@
       <button class="cat-del" data-a="deleteProduct" data-v="${p.id}" aria-label="Supprimer ${esc(p.name)}">✕</button></div>`).join('');
   }
 
+  function shopMsg(msg, warn, email) { S.shop = { email: email || '', msg, warn, busy: false }; render(); }
+  function authMsg(e) {
+    const m = String((e && e.message) || e || '');
+    if (/invalid login/i.test(m)) return 'E-mail ou mot de passe incorrect.';
+    if (/not confirmed/i.test(m)) return 'Confirme d’abord ton e-mail (regarde ta boîte).';
+    if (/already registered|already exists/i.test(m)) return 'Ce compte existe déjà : connecte-toi.';
+    if (/fetch|network|load failed/i.test(m)) return 'Pas de connexion internet.';
+    return m || 'Ça n’a pas marché.';
+  }
+  async function shopReady(email) {
+    if (!(await CL.isMember())) { await CL.signOut(); return shopMsg('Ce compte n’a pas accès au magasin.', true, email); }
+    await sync();
+    S.shop = {}; S.screen = 'login'; render(); toast('Magasin connecté');
+  }
+
   const SCREENS = {
+    shop() {
+      const m = S.shop || {};
+      return `<div class="login">
+        <div class="login-left">
+          <div class="login-brand"><span class="logo"><i></i><i></i></span><b>Inter-Marin-et-Maël<small>le supermarché de la famille</small></b></div>
+          <h1>Compte du magasin</h1>
+          <p class="hint" style="max-width:380px;text-align:center;font-size:16px;line-height:1.4;margin:0">Une seule fois sur cet appareil. Ensuite, Marin et Maël entrent avec leurs codes, comme d’habitude.</p>
+        </div>
+        <div class="login-right shop-form">
+          <label>E-mail<input class="field" id="shop-email" type="email" autocomplete="username" value="${esc(m.email || '')}"></label>
+          <label>Mot de passe<input class="field" id="shop-pass" type="password" autocomplete="current-password"></label>
+          <button class="btn btn-go" data-a="shopSignIn" ${m.busy ? 'disabled' : ''}>Se connecter</button>
+          <button class="btn btn-ghost" data-a="shopSignUp" ${m.busy ? 'disabled' : ''}>Créer le compte du magasin</button>
+          <span class="shop-msg ${m.warn ? 'warn' : ''}">${esc(m.msg || '')}</span>
+        </div></div>`;
+    },
     login() {
       const L = S.login, who = db.staff.find(s => s.id === L.who);
       return `<div class="login">
@@ -741,9 +839,9 @@
           <div class="card-box"><h3>Caisse</h3>
             <div class="row"><span class="grow">Nom de la caisse</span><input class="field" style="width:170px" id="set-caisse" value="${esc(db.settings.caisse)}"></div>
             <div class="row"><span class="grow">Fond de caisse</span><input class="field mono" id="set-fond" value="${num(db.settings.fond)}" inputmode="decimal"></div>
-            <span class="hint">La caisse s’enregistre toute seule dans ce navigateur.</span>
+            <span class="hint">${CL.on ? 'Tout est partagé par Supabase entre les appareils du magasin.' : 'La caisse s’enregistre toute seule dans ce navigateur.'}</span>
             <div style="flex:1"></div>
-            <button class="btn btn-oups" data-a="resetAll">Tout effacer et recommencer</button>
+            ${CL.on ? `<button class="btn btn-white" data-a="resetAll">Recharger depuis Supabase</button><button class="btn btn-line" data-a="shopSignOut">Déconnecter cet appareil</button>` : '<button class="btn btn-oups" data-a="resetAll">Tout effacer et recommencer</button>'}
           </div>
         </div></div>`;
     }
@@ -824,7 +922,7 @@
 
   /* ——— Rendu ——— */
   function render() {
-    if (S.screen !== 'login' && !user()) S.screen = 'login';
+    if (S.screen !== 'login' && S.screen !== 'shop' && !user()) S.screen = 'login';
     $screen.innerHTML = SCREENS[S.screen]();
     const hadFocus = S.modal && (S.modal.type === 'product' || S.modal.type === 'newcard');
     $modal.innerHTML = S.modal ? MODALS[S.modal.type](S.modal) : '';
@@ -993,22 +1091,32 @@
       const t = cur();
       if (!t.lines.length) return toast('Le ticket est vide', true);
       S.modal = { type: 'confirm', title: `Annuler le ticket n° ${pad4(t.no)} ?`, text: `${t.lines.length} ligne${t.lines.length > 1 ? 's' : ''} seront effacées. Il sera compté dans la clôture.`, yes: 'Annuler le ticket', danger: true,
-        onYes: () => { db.day.voided++; db.current = null; S.sel = -1; save(); toast('Ticket annulé'); } };
+        onYes: () => { db.day.voided++; CL.queue({ kind: 'rpc', fn: 'enregistrer_ticket', args: { p: ticketRow(t, 'annule') } }); db.current = null; S.sel = -1; save(); toast('Ticket annulé'); } };
       render();
     },
     label() { S.screen = 'label'; render(); },
-    drawer() { db.day.drawer++; save(); SOUND.ding(); render(); toast('Tiroir ouvert'); },
+    drawer() { db.day.drawer++; CL.queue({ kind: 'rpc', fn: 'ouvrir_tiroir' }); save(); SOUND.ding(); render(); toast('Tiroir ouvert'); },
     reprint() { const t = db.history && db.history[0]; if (!t) return toast('Aucun ticket à réimprimer', true); printHTML(receiptHTML(t)); },
     settings() { S.screen = 'settings'; render(); },
     closeDay() {
       const t = cur();
       S.modal = { type: 'confirm', title: 'Imprimer la clôture et fermer ?',
         text: (t.lines.length ? 'Le ticket en cours sera annulé. ' : '') + 'Les compteurs du jour repartent à zéro.', yes: 'Imprimer et fermer', danger: true,
-        onYes: () => {
-          if (t.lines.length) { db.day.voided++; db.current = null; }
+        onYes: async () => {
+          if (t.lines.length) { db.day.voided++; CL.queue({ kind: 'rpc', fn: 'enregistrer_ticket', args: { p: ticketRow(t, 'annule') } }); db.current = null; save(); }
+          if (CL.on) {
+            // La clôture compte les tickets de tous les appareils : il faut être en ligne.
+            toast('Clôture en cours…');
+            try {
+              await CL.flush();
+              if (CL.pending()) throw new Error('hors ligne');
+              const d = await CL.pull(); if (d) applyCloud(d);
+              await CL.call('cloturer', { p_resume: Object.assign({ jour: db.day.date, caisse: db.settings.caisse }, zData()) });
+            } catch (e) { render(); return toast('Clôture impossible : pas de connexion', true); }
+          }
           printHTML(zReceiptHTML(zData()));
           db.day = DATA.freshDay(db.settings.fond);
-          db.user = null; S.screen = 'login'; save();
+          db.user = null; S.screen = 'login'; save(); render();
         } };
       render();
     },
@@ -1026,16 +1134,17 @@
       if (ean && ean[0] === '2' && ean.length === 13) { err.textContent = 'Les codes qui commencent par 2 sont réservés aux étiquettes maison.'; return; }
       if (ean && db.products.some(x => x.ean === ean && x.id !== m.id)) { err.textContent = 'Ce code-barres est déjà utilisé.'; return; }
       let p = db.products.find(x => x.id === m.id);
-      if (!p) { p = { id: 'p' + db.nextProduct++, rayon: r, ppp: 0 }; db.products.push(p); }
+      if (!p) { p = { id: 'a' + CL.uid().replace(/-/g, '').slice(0, 12), rayon: r, ppp: 0 }; db.products.push(p); }
       if (!p.ppp || p.rayon !== r) p.ppp = Math.max(0, ...db.products.filter(x => x.rayon === r && x !== p).map(x => x.ppp)) + 1;
       Object.assign(p, { name, price, unit, rayon: r, ean: ean || null });
+      CL.queue({ kind: 'upsert', table: 'articles', row: articleRow(p) });
       save(); S.modal = null; render(); toast(`${name} enregistré`);
     },
     deleteProduct(v) {
       const id = v || (S.modal && S.modal.id), p = db.products.find(x => x.id === id);
       if (!p) return;
       S.modal = { type: 'confirm', title: `Supprimer ${p.name} ?`, text: 'Il disparaît du catalogue. Les tickets déjà faits ne changent pas.', yes: 'Supprimer', danger: true,
-        onYes: () => { db.products = db.products.filter(x => x.id !== id); save(); toast(`${p.name} supprimé`); } };
+        onYes: () => { db.products = db.products.filter(x => x.id !== id); CL.queue({ kind: 'delete', table: 'articles', key: 'id', value: id }); save(); toast(`${p.name} supprimé`); } };
       render();
     },
     dupProduct() {
@@ -1062,10 +1171,18 @@
       printHTML(Array(L.copies).fill(one).join(''), '62mm 29mm');
     },
     newCard() { S.modal = { type: 'newcard' }; render(); },
-    saveCard() {
+    async saveCard() {
       const name = $('f-cname').value.trim() || 'Copain';
-      const n = db.nextCard++;
-      db.cards[n] = { num: n, name, stamps: 0, surprises: 0 };
+      let n;
+      if (CL.on) {
+        try {
+          const r = await CL.call('nouvelle_carte', { p_nom: name }), c = Array.isArray(r) ? r[0] : r;
+          n = c.num; db.cards[n] = { num: n, name: c.nom, stamps: 0, surprises: 0 };
+        } catch (e) { return toast('Pas de connexion : carte non créée', true); }
+      } else {
+        n = db.nextCard++;
+        db.cards[n] = { num: n, name, stamps: 0, surprises: 0 };
+      }
       S.label.card = n; S.modal = null; save(); render(); toast(`Carte n° ${pad4(n)} créée`);
     },
 
@@ -1083,12 +1200,46 @@
       db.settings.caisse = $('set-caisse').value.trim() || 'Caisse 1';
       db.settings.fond = fond;
       if (!db.day.sales.length) db.day.fond = fond;
+      CL.queue({ kind: 'upsert', table: 'personnel', row: db.staff.map(staffRow) });
+      CL.queue({ kind: 'upsert', table: 'reglages', row: [{ cle: 'caisse', valeur: db.settings.caisse }, { cle: 'fond', valeur: db.settings.fond }] });
       save(); render(); toast('Réglages enregistrés');
     },
     resetAll() {
+      if (CL.on) {
+        S.modal = { type: 'confirm', title: 'Recharger depuis Supabase ?', text: 'Cet appareil oublie sa copie et reprend tout depuis Supabase. Le ticket en cours est perdu.', yes: 'Recharger',
+          onYes: async () => { await CL.flush(); db = DATA.reset(); db.cloudSynced = true; save(); S.screen = 'login'; render(); await sync(); render(); toast('Données rechargées'); } };
+        return render();
+      }
       S.modal = { type: 'confirm', title: 'Tout effacer ?', text: 'Produits, cartes Copains, tickets et réglages reviennent comme au premier jour.', yes: 'Tout effacer', danger: true,
         onYes: () => { db = DATA.reset(); save(); S.screen = 'login'; } };
       render();
+    },
+    shopSignOut() {
+      S.modal = { type: 'confirm', title: 'Déconnecter cet appareil ?', text: CL.pending() ? `Attention : ${CL.pending()} modification(s) pas encore envoyée(s) seront perdues.` : 'Il faudra se reconnecter avec le compte du magasin.', yes: 'Déconnecter', danger: true,
+        onYes: async () => { await CL.flush(); await CL.signOut(); db = DATA.reset(); save(); S.shop = {}; S.screen = 'shop'; render(); } };
+      render();
+    },
+
+    /* Compte du magasin (Supabase) */
+    async shopSignIn() {
+      const email = $('shop-email').value.trim(), pw = $('shop-pass').value;
+      if (!email || !pw) return shopMsg('E-mail et mot de passe, s’il te plaît.', true, email);
+      S.shop = { email, busy: true, msg: 'Connexion…' }; render();
+      try {
+        await CL.signIn(email, pw);
+        await shopReady(email);
+      } catch (e) { shopMsg(authMsg(e), true, email); }
+    },
+    async shopSignUp() {
+      const email = $('shop-email').value.trim(), pw = $('shop-pass').value;
+      if (!email || !pw) return shopMsg('E-mail et mot de passe, s’il te plaît.', true, email);
+      if (pw.length < 8) return shopMsg('Mot de passe : 8 caractères minimum.', true, email);
+      S.shop = { email, busy: true, msg: 'Création du compte…' }; render();
+      try {
+        const r = await CL.signUp(email, pw);
+        if (r && r.session) return shopReady(email);
+        shopMsg('Compte créé ! Ouvre l’e-mail de confirmation, puis reviens te connecter ici.', false, email);
+      } catch (e) { shopMsg(authMsg(e), true, email); }
     }
   };
 
@@ -1106,6 +1257,7 @@
       const v = e.target.value.replace(/\s/g, '');
       if (/^\d{8,13}$/.test(v)) { e.target.value = ''; S.catQuery = ''; onScan(v); }
     }
+    if ((e.target.id === 'shop-email' || e.target.id === 'shop-pass') && e.key === 'Enter' && !(S.shop && S.shop.busy)) A.shopSignIn();
   }, true);
   $stage.addEventListener('click', e => {
     if (e.target === $modal && S.modal && S.modal.type !== 'oups') { S.modal = null; render(); return; }
@@ -1124,6 +1276,19 @@
   fit();
   setInterval(() => { const c = $('clock'); if (c) c.textContent = hhmm(); }, 15000);
 
-  render();
-  window.CAISSE = { get db() { return db; }, S, onScan };
+  window.CAISSE = { get db() { return db; }, S, onScan, sync };
+  (async function boot() {
+    if (!CL.on) return render();
+    let sess = null;
+    try { sess = await CL.session(); } catch (e) { /* pas de session lisible */ }
+    if (!sess) { S.screen = 'shop'; S.shop = {}; return render(); }
+    render();
+    sync();
+  })();
+  if (CL.on) {
+    CL.onAuth(ev => { if (ev === 'SIGNED_OUT' && S.screen !== 'shop') { S.screen = 'shop'; S.shop = {}; S.modal = null; render(); } });
+    CL.onChange(st => { const el = $('st-cloud'); if (el) el.dataset.state = st; });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) sync(); });
+    setInterval(() => { if (!document.hidden) sync(); }, 60000);
+  }
 })();
