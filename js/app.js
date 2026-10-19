@@ -170,7 +170,7 @@
     if (m && m.type === 'oups') { S.modal = null; }
     else if (m && m.type === 'callMael') {
       const h = EAN.parseHouse(code), s = h && h.kind === 'badge' && db.staff.find(x => x.badge === h.num && x.manager);
-      if (s) { S.modal = null; return enterManager(); }
+      if (s) return maelOk(m);
       return toast('Badge de Maël attendu', true);
     } else if (m && m.type === 'product') {
       const f = $('f-ean'); if (f) f.value = code; return;
@@ -312,7 +312,7 @@
     if (m.pin.length === len || (k === 'OK' && m.pin)) {
       const s = people.find(p => p.pin === m.pin);
       m.pin = '';
-      if (s) return m.type === 'callMael' ? enterManager() : logIn(s);
+      if (s) return m.type === 'callMael' ? maelOk(m) : logIn(s);
       m.shake = true; SOUND.oups(); render(); m.shake = false;
       return;
     }
@@ -333,6 +333,21 @@
     render();
     toast(`Bonjour ${s.name} !`);
     if (db.day.date !== DATA.today() && db.day.sales.length) setTimeout(() => toast('Pense à la clôture d’hier', true), 2000);
+  }
+  /* Actions réservées au responsable : si Marin est à la caisse, Maël tape son code. */
+  function needMael(reason, then) {
+    const u = user();
+    if (u && u.manager) return then();
+    SOUND.ding();
+    S.modal = { type: 'callMael', pin: '', reason, then };
+    render();
+  }
+  function maelOk(m) {
+    S.modal = null;
+    if (!m.then) return enterManager();
+    SOUND.copain();
+    m.then();
+    render();
   }
   function enterManager() { S.screen = 'manager'; S.modal = null; SOUND.copain(); render(); }
 
@@ -749,7 +764,7 @@
     callMael(m) {
       return `<div class="modal" style="width:520px;background:var(--oups)"><div class="head"><h2>Maël arrive !</h2><span class="right hint" style="color:var(--ink)">Code secret ou badge</span></div>
         <div style="display:grid;grid-template-columns:1fr 230px;gap:16px;align-items:center">
-          <div style="display:flex;flex-direction:column;gap:14px;align-items:center"><div class="dots ${m.shake ? 'shake' : ''}">${Array.from({ length: pinLen(pinsManager()) }, (_, i) => i).map(i => `<i class="${i < m.pin.length ? 'full' : ''}"></i>`).join('')}</div><p style="color:var(--ink);text-align:center">Maël tape son code<br>pour ouvrir le mode responsable.</p></div>
+          <div style="display:flex;flex-direction:column;gap:14px;align-items:center"><div class="dots ${m.shake ? 'shake' : ''}">${Array.from({ length: pinLen(pinsManager()) }, (_, i) => i).map(i => `<i class="${i < m.pin.length ? 'full' : ''}"></i>`).join('')}</div><p style="color:var(--ink);text-align:center">Maël tape son code<br>${esc(m.reason || 'pour ouvrir le mode responsable')}.</p></div>
           <div class="mini-pad">${['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', '⌫'].map(k => `<button class="key ${k === 'C' ? 'k-dark' : ''}" data-a="maelKey" data-v="${k}">${k}</button>`).join('')}</div>
         </div>
         <div class="actions"><button class="btn btn-dark" data-a="closeModal">Fermer</button></div></div>`;
@@ -828,12 +843,15 @@
       const l = selLine();
       if (!l) return toast('Touche d’abord une ligne', true);
       if (l.cancelled) return toast('Ligne déjà annulée', true);
-      S.modal = { type: 'confirm', title: 'Annuler cette ligne ?', text: `${l.name} — elle restera barrée sur le ticket.`, yes: 'Annuler la ligne', danger: true, onYes: () => { l.cancelled = true; save(); toast('Ligne annulée'); } };
-      render();
+      needMael('pour annuler la ligne', () => {
+        S.modal = { type: 'confirm', title: 'Annuler cette ligne ?', text: `${l.name} — elle restera barrée sur le ticket.`, yes: 'Annuler la ligne', danger: true, onYes: () => { l.cancelled = true; save(); toast('Ligne annulée'); } };
+        render();
+      });
     },
     cancelRetour() { cur().returnNext = false; save(); render(); },
 
-    manual(v) {
+    manual(v) { needMael('pour un prix manuel', () => A.manualOpen(v)); },
+    manualOpen(v) {
       const entry = S.saisie.includes(',') ? String(DATA.parseEur(S.saisie) || '') : '';
       if (entry) S.saisie = '';
       S.modal = { type: 'manual', rayon: 1, entry: entry === '0' ? '' : entry, code: v || null };

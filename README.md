@@ -18,6 +18,13 @@ Tout est enregistré dans le navigateur : produits, cartes Copains, tickets du j
 
 Les codes (4 à 6 chiffres) se changent dans **Mode responsable → Réglages**. On peut aussi imprimer un badge et le scanner pour se connecter.
 
+Quand Marin tient la caisse, Maël doit taper son code (ou scanner son badge) pour :
+- ouvrir le **mode responsable** (touche « Appeler Maël ») ;
+- **Annuler ligne** ;
+- **Prix manuel** (aussi depuis l'écran « Oups ! »).
+
+La **Remise** reste libre. Quand Maël est connecté lui-même, rien ne lui est demandé.
+
 ## La douchette
 
 La douchette USB tape le code comme un clavier, puis « Entrée ». La caisse reconnaît la frappe rapide et ajoute l'article directement. Un vrai clavier marche aussi : les chiffres vont dans la zone de saisie.
