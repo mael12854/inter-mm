@@ -174,6 +174,17 @@ input, select { font: inherit; color: inherit; -webkit-user-select: text; user-s
 .pinpad .key.k-ok { background: var(--bip); color: var(--ink); font-size: 18px; }
 .login-foot { font-family: var(--mono); font-size: 12px; color: var(--ink-3); text-align: center; }
 
+/* Compte du magasin */
+.shop-form { gap: 10px; }
+.shop-form label { display: flex; flex-direction: column; gap: 4px; font-size: 14px; font-weight: 600; }
+.shop-form .field { color: var(--ink); border-color: transparent; }
+.shop-form .btn { height: 46px; white-space: nowrap; }
+.btn-ghost { border: 2px solid oklch(1 0 0 / 0.5); color: #fff; }
+.shop-msg { min-height: 40px; font-size: 14px; line-height: 1.35; opacity: 0.9; }
+.shop-msg.warn { color: var(--oups); opacity: 1; }
+.topbar .status.cloud[data-state=pending]::before { background: oklch(0.80 0.15 75); }
+.topbar .status.cloud[data-state=offline]::before, .topbar .status.cloud[data-state=error]::before { background: var(--mael-light); }
+
 /* ——— B · Flash / bandeau ——— */
 #flash { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; padding: 20px; z-index: 30; pointer-events: none; }
 #flash.on { display: flex; animation: flash-in 0.12s ease-out; }

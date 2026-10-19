@@ -7,7 +7,20 @@ La caisse du supermarché de la famille (à la maison). Écran tactile 7″ (800
 Aucun logiciel à installer : ouvrir **`index.html`** dans Chrome ou Edge, puis « Plein écran ».
 En ligne, le site est publié par Vercel à chaque mise à jour de la branche `main`.
 
-Tout est enregistré dans le navigateur : produits, cartes Copains, tickets du jour, réglages.
+Tout est partagé par **Supabase** (projet « Inter-Marin-et-Maël ») : catalogue, cartes Copains, tickets, clôtures, codes et réglages. La caisse est la même sur tous les appareils.
+
+## Compte du magasin (Supabase)
+
+Au premier lancement, chaque appareil demande le **compte du magasin** (e-mail + mot de passe), une seule fois. Ensuite Marin et Maël entrent avec leurs codes, comme d'habitude.
+
+- **Premier compte** : sur l'écran « Compte du magasin », toucher **Créer le compte du magasin**, confirmer l'e-mail reçu, puis **Se connecter**. Le premier compte créé devient automatiquement le compte du magasin.
+- **Autres appareils** : se connecter avec le même e-mail et mot de passe.
+- Un autre compte créé ensuite n'a accès à rien.
+- **Sans internet**, la caisse continue de marcher. Les ventes attendent sur l'appareil et partent dès que la connexion revient (voyant « Supabase » en haut : vert = à jour, orange = envoi en attente, rouge = hors ligne).
+- La **clôture du jour** a besoin d'internet : elle compte les tickets de tous les appareils.
+- Réglages → **Déconnecter cet appareil** ou **Recharger depuis Supabase**.
+
+La structure de la base est dans `supabase/migrations/`.
 
 ## Codes de départ
 
@@ -70,4 +83,8 @@ css/caisse.css    couleurs, polices et mise en page (guide de marque)
 js/ean.js         codes-barres EAN-13
 js/data.js        rayons, produits de départ, sauvegarde, sons
 js/app.js         écrans et fonctionnement de la caisse
+js/cloud.js       synchronisation avec Supabase (file d'attente hors ligne)
+js/config.js      adresse du projet Supabase et clé publique
+js/vendor/        bibliothèque Supabase (supabase-js 2.117.2)
+supabase/         migrations de la base
 ```
