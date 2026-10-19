@@ -270,6 +270,10 @@
     const keys = buf.map(x => x.k); buf = [];
     keys.forEach(k => pressKey(k));
   }
+  /* Douchette réglée en QWERTY sur un clavier français : sans Maj, les chiffres arrivent en & é " ' ( - è _ ç à. */
+  const AZERTY = { '&': '1', 'é': '2', '"': '3', "'": '4', '(': '5', '-': '6', 'è': '7', '_': '8', 'ç': '9', 'à': '0' };
+  const scanDigits = v => String(v).replace(/[&é"'(\-è_çà]/g, c => AZERTY[c]).replace(/\s/g, '');
+
   document.addEventListener('keydown', e => {
     const t = e.target;
     if (t && t.matches && t.matches('input, select, textarea')) {
@@ -278,7 +282,9 @@
       return;
     }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    const k = e.key;
+    // e.code donne la touche physique (Digit2…), quelle que soit la disposition du clavier.
+    const dm = /^(?:Digit|Numpad)(\d)$/.exec(e.code || '');
+    const k = dm ? dm[1] : e.key;
     if (/^\d$/.test(k)) {
       e.preventDefault();
       buf.push({ k, t: performance.now() });
@@ -1251,10 +1257,11 @@
 
   $stage.addEventListener('input', e => {
     if (e.target.id === 'cat-q') { S.catQuery = e.target.value; $('cat-list').innerHTML = catRows(); }
+    if (e.target.id === 'f-ean' && /[&é"'(\-è_çà]/.test(e.target.value)) e.target.value = scanDigits(e.target.value);
   });
   $stage.addEventListener('keydown', e => {
     if (e.target.id === 'cat-q' && e.key === 'Enter') {
-      const v = e.target.value.replace(/\s/g, '');
+      const v = scanDigits(e.target.value);
       if (/^\d{8,13}$/.test(v)) { e.target.value = ''; S.catQuery = ''; onScan(v); }
     }
     if ((e.target.id === 'shop-email' || e.target.id === 'shop-pass') && e.key === 'Enter' && !(S.shop && S.shop.busy)) A.shopSignIn();
