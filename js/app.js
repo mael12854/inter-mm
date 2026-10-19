@@ -20,7 +20,7 @@
     produce: { rayon: 1, pid: null, entry: '', qty: 1 },
     cash: { received: 0 },
     done: null,
-    catRayon: 0,
+    catRayon: 0, catQuery: '',
     label: { tab: 'produit', rayon: 1, pid: null, shelf: 1, card: 42, copies: 1 }
   };
 
@@ -496,6 +496,26 @@
       <span class="spacer"></span><span class="status" id="st-scan">Douchette</span><span class="status">Imprimante</span><span class="clock" id="clock">${hhmm()}</span></div>`;
   }
 
+  /* Catalogue : liste filtrée par rayon et par recherche (sans tenir compte des accents). */
+  const norm = t => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  function catRows() {
+    const q = norm(S.catQuery.trim());
+    const list = db.products
+      .filter(p => !S.catRayon || p.rayon === S.catRayon)
+      .filter(p => !q || norm(p.name).includes(q) || (p.ean || '').includes(q) || productCode(p).includes(q))
+      .sort((a, b) => a.rayon - b.rayon || a.name.localeCompare(b.name, 'fr'));
+    const label = `${list.length} article${list.length > 1 ? 's' : ''}`;
+    setTimeout(() => { const c = $('cat-count'); if (c) c.textContent = label; });
+    if (!list.length) return `<div class="lines-empty"><strong>Aucun article</strong><span>${q ? 'Rien ne correspond à la recherche.' : 'Ce rayon est vide.'}</span><button class="btn btn-dark" data-a="newProduct">+ Nouvel article</button></div>`;
+    return list.map(p => `<div class="cat-row">
+      <button class="cat-main" data-a="editProduct" data-v="${p.id}">
+        <span class="rdot" style="background:${rayon(p.rayon).bg}">${picto(p.rayon, 18)}</span>
+        <span class="cat-name"><b>${esc(p.name)}</b><small>${esc(rayon(p.rayon).name)} · ${p.unit === 'kg' ? 'au kilo' : p.unit === 'barq' ? 'barquette' : 'pièce'}</small></span>
+        <span class="mono">${p.ean ? EAN.spaced(p.ean) : 'maison · ' + EAN.spaced(productCode(p))}</span>
+        <span class="price">${eur(p.price)}${p.unit === 'kg' ? '/kg' : ''}</span></button>
+      <button class="cat-del" data-a="deleteProduct" data-v="${p.id}" aria-label="Supprimer ${esc(p.name)}">✕</button></div>`).join('');
+  }
+
   const SCREENS = {
     login() {
       const L = S.login, who = db.staff.find(s => s.id === L.who);
@@ -644,7 +664,7 @@
     manager() {
       const z = zData(), t = cur();
       const acts = [
-        ['catalog', '€', 'Changer un prix', 'Produits, prix, codes-barres'],
+        ['catalog', '€', 'Catalogue', `${db.products.length} articles · ajouter, modifier, supprimer`],
         ['retour', '↩', 'Retour / remboursement', 'Le prochain article est rendu'],
         ['voidTicket', '✕', 'Annuler le ticket', `Ticket n° ${pad4(t.no)} · ${t.lines.length} ligne${t.lines.length > 1 ? 's' : ''}`],
         ['label', '▦', 'Créer une étiquette', 'Prix, rayon, carte Copains'],
@@ -666,17 +686,13 @@
     },
 
     catalog() {
-      const list = db.products.filter(p => !S.catRayon || p.rayon === S.catRayon).slice().sort((a, b) => a.rayon - b.rayon || a.name.localeCompare(b.name, 'fr'));
       return `<div class="cat">
-        <div class="head"><button class="back" data-a="go" data-v="manager">← Retour</button><h1>Produits &amp; prix</h1><div class="right"><span class="hint">Scanne un produit pour le retrouver ou l’ajouter</span><button class="btn btn-sm btn-dark" data-a="newProduct">+ Nouveau</button></div></div>
+        <div class="head"><button class="back" data-a="go" data-v="manager">← Retour</button><h1>Catalogue</h1><span class="hint" id="cat-count"></span>
+          <div class="right"><input class="field cat-search" id="cat-q" value="${esc(S.catQuery)}" placeholder="Chercher ou scanner…" autocomplete="off" aria-label="Chercher un article"><button class="btn btn-sm btn-dark" data-a="newProduct">+ Ajouter</button></div></div>
         <div class="rayon-tabs" style="grid-template-columns:repeat(9,minmax(0,1fr))">
           <button class="rtab ${!S.catRayon ? 'on' : ''}" style="background:#fff" data-a="catRayon" data-v="0"><b style="font-size:18px">∗</b>Tous</button>
           ${RAYONS.map(r => `<button class="rtab ${r.n === S.catRayon ? 'on' : ''}" style="background:${r.bg}" data-a="catRayon" data-v="${r.n}">${picto(r.n, 22)}${esc(r.name)}</button>`).join('')}</div>
-        <div class="cat-list">${list.map(p => `<button class="cat-row" data-a="editProduct" data-v="${p.id}">
-          <span class="rdot" style="background:${rayon(p.rayon).bg}">${picto(p.rayon, 18)}</span>
-          <span><b>${esc(p.name)}</b></span>
-          <span class="mono">${p.ean ? EAN.spaced(p.ean) : 'maison · ' + EAN.spaced(productCode(p))}</span>
-          <span class="price">${eur(p.price)}${p.unit === 'kg' ? '/kg' : ''}</span></button>`).join('')}</div>
+        <div class="cat-list" id="cat-list">${catRows()}</div>
       </div>`;
     },
 
@@ -786,8 +802,8 @@
         <div class="actions"><button class="btn btn-dark" data-a="closeModal">Fermer</button></div></div>`;
     },
     product(m) {
-      const p = m.id ? db.products.find(x => x.id === m.id) : { name: '', price: 0, unit: 'piece', rayon: S.catRayon || 1, ean: m.ean || '' };
-      return `<div class="modal"><div class="head"><h2>${m.id ? 'Modifier le produit' : 'Nouveau produit'}</h2></div>
+      const p = m.id ? db.products.find(x => x.id === m.id) : (m.draft || { name: '', price: 0, unit: 'piece', rayon: S.catRayon || 1, ean: m.ean || '' });
+      return `<div class="modal"><div class="head"><h2>${m.id ? 'Modifier l’article' : 'Nouvel article'}</h2>${m.id ? `<div class="right"><button class="btn btn-sm btn-white" data-a="dupProduct">Dupliquer</button><button class="btn btn-sm btn-white" data-a="labelProduct">Étiquette</button></div>` : ''}</div>
         <div class="form">
           <label for="f-name">Nom</label><input class="field" id="f-name" value="${esc(p.name)}" maxlength="40" autocomplete="off">
           <label for="f-price">Prix</label><input class="field mono" id="f-price" value="${p.price ? num(p.price) : ''}" placeholder="1,05" inputmode="decimal" autocomplete="off">
@@ -796,7 +812,7 @@
           <label for="f-ean">Code-barres</label><input class="field mono" id="f-ean" value="${esc(p.ean || '')}" placeholder="vide = étiquette maison" inputmode="numeric" maxlength="13" autocomplete="off">
         </div>
         <span class="hint" id="f-err" style="color:var(--mael);min-height:18px"></span>
-        <div class="actions">${m.id ? '<button class="btn btn-line" style="margin-right:auto" data-a="deleteProduct">Supprimer</button>' : ''}<button class="btn btn-line" data-a="closeModal">Annuler</button><button class="btn btn-go" data-a="saveProduct">Enregistrer</button></div></div>`;
+        <div class="actions">${m.id ? `<button class="btn btn-line" style="margin-right:auto" data-a="deleteProduct" data-v="${m.id}">Supprimer</button>` : ''}<button class="btn btn-line" data-a="closeModal">Annuler</button><button class="btn btn-go" data-a="saveProduct">Enregistrer</button></div></div>`;
     },
     newcard() {
       return `<div class="modal" style="width:460px"><h2>Nouvelle carte Copains</h2>
@@ -1015,10 +1031,22 @@
       Object.assign(p, { name, price, unit, rayon: r, ean: ean || null });
       save(); S.modal = null; render(); toast(`${name} enregistré`);
     },
-    deleteProduct() {
-      const id = S.modal.id, p = db.products.find(x => x.id === id);
-      S.modal = { type: 'confirm', title: `Supprimer ${p ? p.name : 'ce produit'} ?`, yes: 'Supprimer', danger: true, onYes: () => { db.products = db.products.filter(x => x.id !== id); save(); } };
+    deleteProduct(v) {
+      const id = v || (S.modal && S.modal.id), p = db.products.find(x => x.id === id);
+      if (!p) return;
+      S.modal = { type: 'confirm', title: `Supprimer ${p.name} ?`, text: 'Il disparaît du catalogue. Les tickets déjà faits ne changent pas.', yes: 'Supprimer', danger: true,
+        onYes: () => { db.products = db.products.filter(x => x.id !== id); save(); toast(`${p.name} supprimé`); } };
       render();
+    },
+    dupProduct() {
+      const p = db.products.find(x => x.id === S.modal.id); if (!p) return;
+      S.modal = { type: 'product', id: null, draft: { name: p.name + ' (copie)', price: p.price, unit: p.unit, rayon: p.rayon, ean: '' } };
+      render();
+    },
+    labelProduct() {
+      const p = db.products.find(x => x.id === S.modal.id); if (!p) return;
+      S.label = Object.assign(S.label, { tab: 'produit', rayon: p.rayon, pid: p.id, copies: 1 });
+      S.modal = null; S.screen = 'label'; render();
     },
 
     labTab(v) { S.label.tab = v; render(); },
@@ -1070,6 +1098,15 @@
     render();
   }
 
+  $stage.addEventListener('input', e => {
+    if (e.target.id === 'cat-q') { S.catQuery = e.target.value; $('cat-list').innerHTML = catRows(); }
+  });
+  $stage.addEventListener('keydown', e => {
+    if (e.target.id === 'cat-q' && e.key === 'Enter') {
+      const v = e.target.value.replace(/\s/g, '');
+      if (/^\d{8,13}$/.test(v)) { e.target.value = ''; S.catQuery = ''; onScan(v); }
+    }
+  }, true);
   $stage.addEventListener('click', e => {
     if (e.target === $modal && S.modal && S.modal.type !== 'oups') { S.modal = null; render(); return; }
     const el = e.target.closest('[data-a]');

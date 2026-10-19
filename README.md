@@ -5,7 +5,7 @@ La caisse du supermarché de la famille (à la maison). Écran tactile 7″ (800
 ## Lancer la caisse
 
 Aucun logiciel à installer : ouvrir **`index.html`** dans Chrome ou Edge, puis « Plein écran ».
-Ça marche aussi en ligne avec GitHub Pages (Réglages du dépôt → Pages → branche `main`).
+En ligne, le site est publié par Vercel à chaque mise à jour de la branche `main`.
 
 Tout est enregistré dans le navigateur : produits, cartes Copains, tickets du jour, réglages.
 
@@ -40,7 +40,8 @@ La douchette USB tape le code comme un clavier, puis « Entrée ». La caisse re
 - **Sans code** : fruits, légumes, boulangerie… au poids (en grammes) ou à la pièce.
 - **Paiement** : carte, pièces, billets. On peut payer une partie par carte et le reste en espèces. La caisse calcule le rendu et les pièces à rendre.
 - **Carte Copains** : la scanner pendant les courses ou au paiement. 1 tampon par euro, 10 tampons = une surprise.
-- **Mode responsable** (Maël) : produits et prix, retours, annuler un ticket, étiquettes, tiroir, réimpression, réglages, clôture du jour.
+- **Mode responsable** (Maël) : catalogue, retours, annuler un ticket, étiquettes, tiroir, réimpression, réglages, clôture du jour.
+- **Catalogue** (Mode responsable → Catalogue) : chercher un article par nom ou code, filtrer par rayon, **ajouter**, **modifier** (nom, prix, vente à la pièce / au kilo / à la barquette, rayon, code-barres), **dupliquer**, **supprimer** (✕ au bout de la ligne), ou imprimer son étiquette.
 
 ## Codes-barres maison
 
@@ -54,7 +55,7 @@ Les vrais produits gardent leur code EAN. Pour le reste, Maël imprime une étiq
 
 Les codes imprimés sont de vrais EAN-13, lisibles par la douchette.
 
-Pour ajouter un vrai produit de la maison : **Mode responsable → Changer un prix**, puis scanner le produit. La fiche s'ouvre avec le code déjà rempli.
+Pour ajouter un vrai produit de la maison : **Mode responsable → Catalogue**, puis scanner le produit. S'il est déjà connu, sa fiche s'ouvre ; sinon une nouvelle fiche s'ouvre avec le code déjà rempli.
 
 ## Imprimante
 
