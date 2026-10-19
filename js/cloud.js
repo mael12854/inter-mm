@@ -80,7 +80,7 @@
       q(client.from('cartes').select('num, nom, tampons, surprises')),
       q(client.from('personnel').select('*').order('ordre')),
       q(client.from('reglages').select('cle, valeur')),
-      q(client.from('tickets').select('no, statut, jour, ferme_le, caissier, total, articles, remises, lignes_annulees, especes, carte').is('cloture_id', null).order('ferme_le')),
+      q(client.from('tickets').select('*').is('cloture_id', null).order('ferme_le')),
       q(client.from('tickets').select('no, statut, detail').order('ferme_le', { ascending: false }).limit(30))
     ]);
     lastError = null; emit();

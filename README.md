@@ -22,6 +22,8 @@ Au premier lancement, chaque appareil demande le **compte du magasin** (e-mail +
 
 La structure de la base est dans `supabase/migrations/`.
 
+Crédit Domestique est un autre projet Supabase (« Credit-Domestique ») : la caisse utilise ses fonctions `login_account` et `respond_charge`. Les montants sont en centimes des deux côtés.
+
 ## Codes de départ
 
 | Qui | Rôle | Code |
@@ -52,6 +54,7 @@ La douchette USB tape le code comme un clavier, puis « Entrée ». La caisse re
 - **Bip !** en vert à chaque article, en bandeau si on enchaîne. **Oups !** en jaune si le code est inconnu.
 - **Sans code** : fruits, légumes, boulangerie… au poids (en grammes) ou à la pièce.
 - **Paiement** : carte, pièces, billets. On peut payer une partie par carte et le reste en espèces. La caisse calcule le rendu et les pièces à rendre.
+- **Crédit Domestique** : sur « Comment on paie ? », touche **Crédit Domestique**, choisis qui paie, puis la personne tape son **code express**. L'argent passe de son compte à celui du magasin (« INTER-MARIN-ET-MAËL »), comme la cantine. S'il n'y a pas assez sur le compte, la caisse prend ce qu'il y a et le reste se paie autrement.
 - **Carte Copains** : la scanner pendant les courses ou au paiement. 1 tampon par euro, 10 tampons = une surprise.
 - **Mode responsable** (Maël) : catalogue, retours, annuler un ticket, étiquettes, tiroir, réimpression, réglages, clôture du jour.
 - **Catalogue** (Mode responsable → Catalogue) : chercher un article par nom ou code, filtrer par rayon, **ajouter**, **modifier** (nom, prix, vente à la pièce / au kilo / à la barquette, rayon, code-barres), **dupliquer**, **supprimer** (✕ au bout de la ligne), ou imprimer son étiquette.
@@ -84,6 +87,7 @@ js/ean.js         codes-barres EAN-13
 js/data.js        rayons, produits de départ, sauvegarde, sons
 js/app.js         écrans et fonctionnement de la caisse
 js/cloud.js       synchronisation avec Supabase (file d'attente hors ligne)
+js/credit.js      paiement par Crédit Domestique
 js/config.js      adresse du projet Supabase et clé publique
 js/vendor/        bibliothèque Supabase (supabase-js 2.117.2)
 supabase/         migrations de la base
