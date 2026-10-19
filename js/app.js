@@ -26,7 +26,7 @@
       id: t.id, no: t.no, statut, ferme_le: new Date(t.closed || Date.now()).toISOString(), jour: DATA.today(),
       caissier: t.cashier || (user() || {}).name || null, caisse: t.caisse || db.settings.caisse,
       total: paid ? tt.total : 0, articles: paid ? tt.items : 0, remises: paid ? tt.disc : 0, lignes_annulees: paid ? tt.cancelled : 0,
-      especes: paid ? sum('especes') : 0, carte: paid ? sum('carte') : 0,
+      especes: paid ? sum('especes') : 0, carte: paid ? sum('carte') : 0, credit: paid ? sum('credit') : 0,
       num_carte: paid && c ? c.num : null, nom_carte: c ? c.name : null, tampons: paid ? (t.stampsAdded || 0) : 0, detail: t
     };
   }
@@ -51,7 +51,7 @@
     const paid = d.ouverts.filter(t => t.statut === 'paye');
     db.day = {
       date: d.ouverts.length ? d.ouverts[0].jour : DATA.today(), fond: db.settings.fond,
-      sales: paid.map(t => ({ no: t.no, at: Date.parse(t.ferme_le), total: t.total, items: t.articles, disc: t.remises, cancelled: t.lignes_annulees, cash: t.especes, card: t.carte, cashier: t.caissier })),
+      sales: paid.map(t => ({ no: t.no, at: Date.parse(t.ferme_le), total: t.total, items: t.articles, disc: t.remises, cancelled: t.lignes_annulees, cash: t.especes, card: t.carte, credit: t.credit || 0, cashier: t.caissier })),
       voided: d.ouverts.length - paid.length, drawer: Number(R.tiroir || 0)
     };
     db.history = d.recents.filter(t => t.statut === 'paye' && t.detail).map(t => t.detail);
@@ -318,6 +318,7 @@
     if (m) {
       if (m.type === 'oups') { if (k === 'OK' || k === 'C') { S.modal = null; render(); } return; }
       if (m.type === 'manual' || m.type === 'cardpay') return padEntry(m, k, 7);
+      if (m.type === 'credit') { if (m.step === 'code') A.creditKey(k); else if (m.step === 'confirm' && k === 'OK') A.creditPay(); return; }
       if (m.type === 'callMael') return pinKey(m, k, pinsManager());
       if (m.type === 'confirm' && k === 'OK') return A.confirmYes();
       return;
@@ -463,7 +464,7 @@
       t.cardInfo = { num: c.num, name: c.name, stamps: c.stamps };
     }
     const sum = type => t.payments.filter(p => p.type === type).reduce((s, p) => s + p.amount, 0);
-    db.day.sales.push({ no: t.no, at: t.closed, total: tt.total, items: tt.items, disc: tt.disc, cancelled: tt.cancelled, cash: sum('especes'), card: sum('carte'), cashier: t.cashier });
+    db.day.sales.push({ no: t.no, at: t.closed, total: tt.total, items: tt.items, disc: tt.disc, cancelled: tt.cancelled, cash: sum('especes'), card: sum('carte'), credit: sum('credit'), cashier: t.cashier });
     db.history = [t].concat(db.history || []).slice(0, 30);
     CL.queue({ kind: 'rpc', fn: 'enregistrer_ticket', args: { p: ticketRow(t, 'paye') } });
     db.current = null;
@@ -504,6 +505,7 @@
     const pay = [];
     t.payments.forEach(p => {
       if (p.type === 'carte') pay.push(`<div class="r-row"><span>Carte</span><span>${eur(p.amount)}</span></div>`);
+      else if (p.type === 'credit') pay.push(`<div class="r-row"><span>Crédit Domestique</span><span>${eur(p.amount)}</span></div><div class="r-detail">${esc(p.holder || '')}</div>`);
       else pay.push(`<div class="r-row"><span>${p.amount < 0 ? 'Remboursé' : 'Espèces'}</span><span>${eur(p.amount < 0 ? -p.amount : p.received)}</span></div>`);
     });
     const change = t.payments.reduce((s, p) => s + (p.change || 0), 0);
@@ -525,10 +527,10 @@
 
   function zData() {
     const s = db.day.sales, sum = k => s.reduce((a, x) => a + x[k], 0);
-    return { tickets: s.length, items: sum('items'), cash: sum('cash'), card: sum('card'), disc: sum('disc'), cancelled: sum('cancelled'), total: sum('total'), voided: db.day.voided, drawer: db.day.drawer, fond: db.day.fond };
+    return { tickets: s.length, items: sum('items'), cash: sum('cash'), card: sum('card'), credit: s.reduce((a, x) => a + (x.credit || 0), 0), disc: sum('disc'), cancelled: sum('cancelled'), total: sum('total'), voided: db.day.voided, drawer: db.day.drawer, fond: db.day.fond };
   }
   function zRows(z) {
-    return [['Tickets', z.tickets], ['Articles', z.items], ['Espèces', eur(z.cash)], ['Carte', eur(z.card)], ['Remises', z.disc ? '−' + eur(z.disc) : eur(0)], ['Lignes annulées', z.cancelled], ['Tickets annulés', z.voided], ['Fond de caisse', eur(z.fond)], ['Tiroir attendu', eur(z.fond + z.cash)]];
+    return [['Tickets', z.tickets], ['Articles', z.items], ['Espèces', eur(z.cash)], ['Carte', eur(z.card)], ['Crédit Domestique', eur(z.credit)], ['Remises', z.disc ? '−' + eur(z.disc) : eur(0)], ['Lignes annulées', z.cancelled], ['Tickets annulés', z.voided], ['Fond de caisse', eur(z.fond)], ['Tiroir attendu', eur(z.fond + z.cash)]];
   }
   function zReceiptHTML(z) {
     return `<div class="receipt">
@@ -602,6 +604,14 @@
     if (!(await CL.isMember())) { await CL.signOut(); return shopMsg('Ce compte n’a pas accès au magasin.', true, email); }
     await sync();
     S.shop = {}; S.screen = 'login'; render(); toast('Magasin connecté');
+  }
+
+  const CR = window.CREDIT && window.CREDIT.on ? window.CREDIT : { on: false };
+  const PAY_NAMES = { carte: 'Carte', especes: 'Espèces', credit: 'Crédit Domestique' };
+  /* « MARIN · FOYER » → « Marin » */
+  function creditName(h) {
+    const first = String(h || '').split('·')[0].trim().toLowerCase();
+    return first.replace(/(^|[\s-])(\p{L})/gu, (x, a, b) => a + b.toUpperCase());
   }
 
   const SCREENS = {
@@ -709,13 +719,14 @@
 
     pay() {
       const t = cur(), tt = totals(t), card = t.card != null && db.cards[t.card];
-      const paid = t.payments.length ? `<span class="paid">Déjà payé : ${t.payments.map(p => `${p.type === 'carte' ? 'Carte' : 'Espèces'} ${eur(p.amount)}`).join(' · ')}</span>` : '';
+      const paid = t.payments.length ? `<span class="paid">Déjà payé : ${t.payments.map(p => `${PAY_NAMES[p.type] || 'Espèces'} ${eur(p.amount)}`).join(' · ')}</span>` : '';
       const tiles = tt.remaining < 0
         ? `<div class="pay-tiles" style="grid-template-columns:1fr"><button class="tile" style="background:var(--bip-dark)" data-a="refund"><span class="ic-coin"></span>Je te rends ${eur(-tt.remaining)}</button></div>`
-        : `<div class="pay-tiles">
+        : `<div class="pay-tiles ${CR.on ? 'four' : ''}">
           <button class="tile" style="background:var(--marin)" data-a="payCard"><span class="ic-card"></span>Carte</button>
           <button class="tile" style="background:var(--bip-dark)" data-a="payCash"><span class="ic-coin"></span>Pièces</button>
-          <button class="tile" style="background:var(--mael)" data-a="payCash"><span class="ic-note"></span>Billets</button></div>`;
+          <button class="tile" style="background:var(--mael)" data-a="payCash"><span class="ic-note"></span>Billets</button>
+          ${CR.on ? `<button class="tile" style="background:var(--ink)" data-a="payCredit"><span class="ic-credit">${picto(7, 52, 2.4)}</span>Crédit<br>Domestique</button>` : ''}</div>`;
       return `<div class="full">
         <div class="head"><button class="back" data-a="go" data-v="main">← Caisse</button><h1>${tt.remaining < 0 ? 'On rembourse' : 'Comment on paie ?'}</h1><div class="right"><span class="hint">${t.payments.length ? 'Reste' : 'À payer'}</span><span class="amount">${eur(Math.abs(tt.remaining))}</span></div></div>
         ${tiles}
@@ -758,6 +769,7 @@
         <div class="done-right">
           <span class="merci">${esc(DATA.petitMot(t.closed))}</span>
           ${change || refund ? `<div class="rendu">Je te rends<b>${eur(change || refund)}</b><span class="coins">${coins(change || refund)}</span></div>` : '<div class="rendu">Ticket n° ' + pad4(t.no) + ' payé.</div>'}
+          ${t.payments.filter(x => x.type === 'credit' && x.left != null).map(x => `<div class="copain-box"><span><strong>${esc(x.holder)}</strong> · Crédit Domestique : il reste <strong class="mono">${eur(x.left)}</strong> sur ton compte.</span></div>`).join('')}
           ${c ? `<div class="copain-box"><span><strong>${esc(c.name)}</strong> · +${t.stampsAdded} tampon${t.stampsAdded > 1 ? 's' : ''}</span>
             <div class="stamps">${Array.from({ length: 10 }, (_, i) => `<i class="${i < c.stamps ? (i % 2 ? 's2' : 's1') : ''}"></i>`).join('')}</div>
             ${t.surprise ? '<span class="surprise">10 tampons : une surprise !</span>' : ''}</div>` : ''}
@@ -783,7 +795,7 @@
           <div class="m-actions">${acts.map(([a, ic, l, s]) => `<button class="m-action" data-a="${a}"><span class="m-ic">${ic}</span><span>${l}<small>${s}</small></span></button>`).join('')}</div>
         </div>
         <div class="z"><h2>Clôture du jour</h2>
-          ${[['Tickets', z.tickets], ['Articles', z.items], ['Espèces', eur(z.cash)], ['Carte', eur(z.card)], ['Remises', z.disc ? '−' + eur(z.disc) : eur(0)], ['Lignes annulées', z.cancelled], ['Fond de caisse', eur(z.fond)]].map(([k, v]) => `<div class="row"><span>${k}</span><b>${v}</b></div>`).join('')}
+          ${[['Tickets', z.tickets], ['Articles', z.items], ['Espèces', eur(z.cash)], ['Carte', eur(z.card)], ['Crédit Dom.', eur(z.credit)], ['Remises', z.disc ? '−' + eur(z.disc) : eur(0)], ['Lignes annulées', z.cancelled], ['Fond de caisse', eur(z.fond)]].map(([k, v]) => `<div class="row"><span>${k}</span><b>${v}</b></div>`).join('')}
           <div class="row big"><span>Total</span><b>${eur(z.total)}</b></div>
           <button class="btn btn-mael" data-a="closeDay">Imprimer et fermer</button>
         </div></div>`;
@@ -888,6 +900,33 @@
           <div class="mini-pad">${['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', '⌫'].map(k => `<button class="key ${k === 'C' ? 'k-dark' : ''}" data-a="maelKey" data-v="${k}">${k}</button>`).join('')}</div>
         </div>
         <div class="actions"><button class="btn btn-dark" data-a="closeModal">Fermer</button></div></div>`;
+    },
+    credit(m) {
+      const rem = totals(cur()).remaining;
+      const head = `<div class="head"><h2>Crédit Domestique</h2><span class="right hint">À payer ${eur(rem)}</span></div>`;
+      const msg = `<span class="credit-msg ${m.warn ? 'warn' : ''}">${esc(m.msg || '')}</span>`;
+      if (m.step === 'who') {
+        const list = m.list || [];
+        return `<div class="modal" style="width:620px">${head}<p>Qui paie ?</p>
+          <div class="choice-grid credit-who">${list.map(a => `<button class="choice" data-a="creditPick" data-v="${esc(a.id)}"><b>${esc(creditName(a.holder_name))}</b><small>${esc(a.holder_name)}</small></button>`).join('')}</div>
+          ${msg}<div class="actions"><button class="btn btn-line" data-a="closeModal">Annuler</button></div></div>`;
+      }
+      if (m.step === 'code') {
+        return `<div class="modal" style="width:540px">${head}
+          <div style="display:grid;grid-template-columns:1fr 230px;gap:16px;align-items:center">
+            <div style="display:flex;flex-direction:column;gap:14px;align-items:center;text-align:center">
+              <b style="font-size:22px">${esc(creditName(m.payer.holder_name))}</b>
+              <div class="dots ${m.shake ? 'shake' : ''}">${[0, 1, 2, 3].map(i => `<i class="${i < m.pin.length ? 'full' : ''}"></i>`).join('')}</div>
+              <p>Tape ton code express<br>Crédit Domestique.</p>${msg}</div>
+            <div class="mini-pad">${['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', '⌫'].map(k => `<button class="key ${k === 'C' ? 'k-c' : k === '⌫' ? 'k-dark' : ''}" data-a="creditKey" data-v="${k}" ${m.busy ? 'disabled' : ''}>${k}</button>`).join('')}</div>
+          </div>
+          <div class="actions"><button class="btn btn-line" data-a="creditBack">← Changer de personne</button></div></div>`;
+      }
+      const enough = m.balance >= rem, can = m.balance > 0;
+      return `<div class="modal" style="width:520px">${head}
+        <div class="credit-sum"><span>${esc(creditName(m.payer.holder_name))}</span><span>Sur le compte</span><b class="mono">${eur(m.balance)}</b></div>
+        <p>${!can ? 'Il n’y a pas assez d’argent sur le compte.' : enough ? `Le compte sera débité de ${eur(m.amount)}.` : `Pas assez pour tout payer : ${eur(m.amount)} avec Crédit Domestique, le reste (${eur(rem - m.amount)}) autrement.`}</p>
+        ${msg}<div class="actions"><button class="btn btn-line" data-a="closeModal">Annuler</button>${can ? `<button class="btn btn-go" data-a="creditPay" ${m.busy ? 'disabled' : ''}>Payer ${eur(m.amount)}</button>` : ''}</div></div>`;
     },
     cardpay(m) {
       const rem = totals(cur()).remaining;
@@ -1067,6 +1106,58 @@
       S.modal = null;
       if (amount >= rem) return finish();
       SOUND.bip(); render(); toast(`Carte ${eur(amount)} · reste ${eur(rem - amount)}`);
+    },
+    payCredit() {
+      S.modal = { type: 'credit', step: 'who', list: null, msg: 'Chargement…' }; render();
+      CR.payers().then(list => {
+        const m = S.modal; if (!m || m.type !== 'credit') return;
+        m.list = list; m.msg = list.length ? '' : 'Aucun compte trouvé.'; render();
+      }).catch(() => {
+        const m = S.modal; if (!m || m.type !== 'credit') return;
+        m.msg = 'Pas de connexion à Crédit Domestique.'; m.warn = true; render();
+      });
+    },
+    creditPick(v) {
+      const m = S.modal, a = (m.list || []).find(x => x.id === v); if (!a) return;
+      Object.assign(m, { step: 'code', payer: a, pin: '', msg: '', warn: false, chargeId: null }); render();
+    },
+    creditBack() { const m = S.modal; Object.assign(m, { step: 'who', pin: '', msg: '', warn: false }); render(); },
+    creditKey(k) {
+      const m = S.modal; if (!m || m.busy) return;
+      if (/^\d$/.test(k) && m.pin.length < 4) m.pin += k;
+      else if (k === '⌫') m.pin = m.pin.slice(0, -1);
+      else if (k === 'C') m.pin = '';
+      if (m.pin.length === 4) return A.creditCheck();
+      render();
+    },
+    async creditCheck() {
+      const m = S.modal; m.busy = true; m.msg = 'Vérification…'; m.warn = false; render();
+      let acc = null;
+      try { acc = await CR.check(m.payer.id, m.pin); }
+      catch (e) { Object.assign(m, { busy: false, pin: '', msg: 'Pas de connexion à Crédit Domestique.', warn: true }); return render(); }
+      if (S.modal !== m) return;
+      if (!acc) { SOUND.oups(); Object.assign(m, { busy: false, pin: '', shake: true, msg: 'Code incorrect.', warn: true }); render(); m.shake = false; return; }
+      const rem = totals(cur()).remaining;
+      Object.assign(m, { busy: false, step: 'confirm', code: m.pin, pin: '', balance: Number(acc.balance), amount: Math.max(0, Math.min(rem, Number(acc.balance))), msg: '' });
+      render();
+    },
+    async creditPay() {
+      const m = S.modal, t = cur();
+      if (!m || m.busy || !(m.amount > 0)) return;
+      m.busy = true; m.msg = 'Paiement…'; m.warn = false; render();
+      m.chargeId = m.chargeId || CL.uid();
+      let res;
+      try {
+        await CR.charge(m.chargeId, m.payer.id, m.amount, `Inter-Marin-et-Maël · ticket n° ${pad4(t.no)}`);
+        res = await CR.accept(m.chargeId, m.payer.id, m.code);
+      } catch (e) { Object.assign(m, { busy: false, msg: 'Pas de connexion. Réessaie.', warn: true }); return render(); }
+      // « Déjà réglé » après un réessai : le premier essai était passé.
+      if (!res.ok && !/déjà réglé/i.test(res.message || '')) { SOUND.oups(); Object.assign(m, { busy: false, msg: res.message || 'Paiement refusé.', warn: true }); return render(); }
+      const rem = totals(t).remaining;
+      t.payments.push({ type: 'credit', amount: m.amount, account: m.payer.id, holder: creditName(m.payer.holder_name), charge: m.chargeId, left: res.new_balance != null ? Number(res.new_balance) : null });
+      save(); S.modal = null;
+      if (m.amount >= rem) return finish();
+      SOUND.ding(); S.screen = 'pay'; render(); toast(`Crédit Domestique ${eur(m.amount)} · reste ${eur(rem - m.amount)}`);
     },
     payCash() { S.cash = { received: 0 }; S.screen = 'cash'; render(); },
     cashAdd(v) { S.cash.received += Number(v); render(); },
