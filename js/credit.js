@@ -31,5 +31,15 @@
     return (rows && rows[0]) || { ok: false, message: 'Pas de réponse.' };
   }
 
-  window.CREDIT = { on, payers, check, charge, accept };
+  /* Sans contact : on lit où en est la demande (pending, accepted, refused). */
+  async function status(id) {
+    const rows = must(await client.from('charges').select('status').eq('id', id));
+    return rows && rows[0] ? rows[0].status : null;
+  }
+  /* Le caissier abandonne : la demande encore en attente est refusée (rien n'est débité). */
+  async function cancel(id) {
+    must(await client.from('charges').update({ status: 'refused', responded_at: new Date().toISOString() }).eq('id', id).eq('status', 'pending'));
+  }
+
+  window.CREDIT = { on, payers, check, charge, accept, status, cancel };
 })();

@@ -252,6 +252,13 @@ input, select { font: inherit; color: inherit; -webkit-user-select: text; user-s
 .credit-sum span:first-child { grid-row: 1 / 3; font-size: 22px; font-weight: 800; align-self: center; }
 .credit-sum span:nth-child(2) { font-size: 13px; color: var(--ink-3); text-align: right; }
 .credit-sum b { font-size: 26px; font-weight: 600; text-align: right; }
+.nfc { display: flex; align-items: center; gap: 18px; background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+.nfc p { margin: 6px 0 0; font-size: 16px; }
+.nfc-waves { position: relative; width: 70px; height: 70px; flex-shrink: 0; }
+.nfc-waves i { position: absolute; inset: 0; border-radius: 50%; border: 4px solid var(--marin); opacity: 0; animation: nfc 1.8s ease-out infinite; }
+.nfc-waves i:nth-child(2) { animation-delay: 0.6s; }
+.nfc-waves i:nth-child(3) { animation-delay: 1.2s; }
+@keyframes nfc { from { transform: scale(0.2); opacity: 1; } to { transform: scale(1); opacity: 0; } }
 .credit-msg { min-height: 18px; font-size: 14px; color: var(--ink-2); }
 .credit-msg.warn { color: var(--mael); font-weight: 600; }
 

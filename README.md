@@ -55,6 +55,7 @@ La douchette USB tape le code comme un clavier, puis « Entrée ». La caisse re
 - **Sans code** : fruits, légumes, boulangerie… au poids (en grammes) ou à la pièce.
 - **Paiement** : carte, pièces, billets. On peut payer une partie par carte et le reste en espèces. La caisse calcule le rendu et les pièces à rendre.
 - **Crédit Domestique** : sur « Comment on paie ? », touche **Crédit Domestique**, choisis qui paie, puis la personne tape son **code express**. L'argent passe de son compte à celui du magasin (« INTER-MARIN-ET-MAËL »), comme la cantine. S'il n'y a pas assez sur le compte, la caisse prend ce qu'il y a et le reste se paie autrement.
+  - **Sans contact** : après avoir choisi qui paie, touche **Sans contact · sur le téléphone**. La caisse envoie la demande ; la personne l'accepte dans Crédit Domestique sur son téléphone (comme la cantine), et la caisse voit tout de suite que c'est payé. « Annuler » sur la caisse retire la demande.
 - **Carte Copains** : la scanner pendant les courses ou au paiement. 1 tampon par euro, 10 tampons = une surprise.
 - **Mode responsable** (Maël) : catalogue, retours, annuler un ticket, étiquettes, tiroir, réimpression, réglages, clôture du jour.
 - **Catalogue** (Mode responsable → Catalogue) : chercher un article par nom ou code, filtrer par rayon, **ajouter**, **modifier** (nom, prix, vente à la pièce / au kilo / à la barquette, rayon, code-barres), **dupliquer**, **supprimer** (✕ au bout de la ligne), ou imprimer son étiquette.
