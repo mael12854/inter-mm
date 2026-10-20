@@ -307,7 +307,7 @@
   });
 
   function escape() {
-    if (S.modal) { S.modal = null; render(); return; }
+    if (S.modal) { A.closeModal(); return; }
     const back = { pay: 'main', cash: 'pay', produce: 'main', catalog: 'manager', label: 'manager', settings: 'manager' };
     if (back[S.screen]) { S.screen = back[S.screen]; render(); }
     else if (S.screen === 'main') { S.saisie = ''; S.mult = null; render(); }
@@ -505,7 +505,7 @@
     const pay = [];
     t.payments.forEach(p => {
       if (p.type === 'carte') pay.push(`<div class="r-row"><span>Carte</span><span>${eur(p.amount)}</span></div>`);
-      else if (p.type === 'credit') pay.push(`<div class="r-row"><span>Crédit Domestique</span><span>${eur(p.amount)}</span></div><div class="r-detail">${esc(p.holder || '')}</div>`);
+      else if (p.type === 'credit') pay.push(`<div class="r-row"><span>Crédit Domestique</span><span>${eur(p.amount)}</span></div><div class="r-detail">${esc(p.holder || '')}${p.contactless ? ' · sans contact' : ''}</div>`);
       else pay.push(`<div class="r-row"><span>${p.amount < 0 ? 'Remboursé' : 'Espèces'}</span><span>${eur(p.amount < 0 ? -p.amount : p.received)}</span></div>`);
     });
     const change = t.payments.reduce((s, p) => s + (p.change || 0), 0);
@@ -607,6 +607,25 @@
   }
 
   const CR = window.CREDIT && window.CREDIT.on ? window.CREDIT : { on: false };
+  function stopWait(m) { if (m && m.timer) { clearInterval(m.timer); m.timer = null; } }
+  async function creditPoll(m) {
+    if (S.modal !== m || m.step !== 'wait') return stopWait(m);
+    if (m.polling) return;
+    m.polling = true;
+    let st = null;
+    try { st = await CR.status(m.chargeId); } catch (e) { /* on réessaie au prochain tour */ }
+    m.polling = false;
+    if (S.modal !== m || m.step !== 'wait') return;
+    if (st === 'accepted') { stopWait(m); return creditAccepted(m); }
+    if (st === 'refused') { stopWait(m); SOUND.oups(); Object.assign(m, { refused: true, msg: 'Paiement refusé sur le téléphone.', warn: true }); render(); }
+  }
+  function creditAccepted(m) {
+    const t = cur(), rem = totals(t).remaining;
+    t.payments.push({ type: 'credit', amount: m.amount, account: m.payer.id, holder: creditName(m.payer.holder_name), charge: m.chargeId, contactless: true, left: null });
+    save(); S.modal = null;
+    if (m.amount >= rem) return finish();
+    SOUND.ding(); S.screen = 'pay'; render(); toast(`Crédit Domestique ${eur(m.amount)} · reste ${eur(rem - m.amount)}`);
+  }
   const PAY_NAMES = { carte: 'Carte', especes: 'Espèces', credit: 'Crédit Domestique' };
   /* « MARIN · FOYER » → « Marin » */
   function creditName(h) {
@@ -920,7 +939,14 @@
               <p>Tape ton code express<br>Crédit Domestique.</p>${msg}</div>
             <div class="mini-pad">${['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', '⌫'].map(k => `<button class="key ${k === 'C' ? 'k-c' : k === '⌫' ? 'k-dark' : ''}" data-a="creditKey" data-v="${k}" ${m.busy ? 'disabled' : ''}>${k}</button>`).join('')}</div>
           </div>
-          <div class="actions"><button class="btn btn-line" data-a="creditBack">← Changer de personne</button></div></div>`;
+          <div class="actions"><button class="btn btn-line" style="margin-right:auto" data-a="creditBack">← Changer de personne</button><button class="btn btn-marin" data-a="creditContactless" ${m.busy ? 'disabled' : ''}>Sans contact · sur le téléphone</button></div></div>`;
+      }
+      if (m.step === 'wait') {
+        return `<div class="modal" style="width:540px">${head}
+          <div class="nfc"><div class="nfc-waves"><i></i><i></i><i></i></div>
+            <div><b style="font-size:22px">${esc(creditName(m.payer.holder_name))}</b>
+            <p>Ouvre <strong>Crédit Domestique</strong> sur ton téléphone et accepte le paiement de <strong class="mono">${eur(m.amount)}</strong>.</p></div></div>
+          ${msg}<div class="actions">${m.refused ? '<button class="btn btn-line" data-a="creditBack">← Retour</button><button class="btn btn-marin" data-a="creditContactless">Redemander</button>' : '<button class="btn btn-line" data-a="closeModal">Annuler</button>'}</div></div>`;
       }
       const enough = m.balance >= rem, can = m.balance > 0;
       return `<div class="modal" style="width:520px">${head}
@@ -980,7 +1006,11 @@
   /* ——— Actions (boutons) ——— */
   const A = {
     go(v) { S.screen = v; S.modal = null; render(); },
-    closeModal() { S.modal = null; render(); },
+    closeModal() {
+      const m = S.modal;
+      if (m && m.type === 'credit' && m.step === 'wait') return A.creditCancel();
+      S.modal = null; render();
+    },
     fullscreen() { const d = document.documentElement; (d.requestFullscreen || d.webkitRequestFullscreen || (() => {})).call(d); },
 
     pickUser(v) { S.login = { who: v, pin: '', shake: false }; render(); },
@@ -1121,7 +1151,32 @@
       const m = S.modal, a = (m.list || []).find(x => x.id === v); if (!a) return;
       Object.assign(m, { step: 'code', payer: a, pin: '', msg: '', warn: false, chargeId: null }); render();
     },
-    creditBack() { const m = S.modal; Object.assign(m, { step: 'who', pin: '', msg: '', warn: false }); render(); },
+    creditBack() { const m = S.modal; stopWait(m); Object.assign(m, { step: 'who', pin: '', msg: '', warn: false, refused: false, chargeId: null }); render(); },
+    /* Sans contact : la caisse envoie la demande, la personne l'accepte dans Crédit Domestique sur son téléphone. */
+    async creditContactless() {
+      const m = S.modal, t = cur();
+      if (!m || m.type !== 'credit' || m.busy) return;
+      const rem = totals(t).remaining;
+      if (rem <= 0) return;
+      stopWait(m);
+      Object.assign(m, { step: 'wait', amount: rem, chargeId: CL.uid(), refused: false, busy: true, msg: 'Envoi de la demande…', warn: false });
+      render();
+      try { await CR.charge(m.chargeId, m.payer.id, m.amount, `Inter-Marin-et-Maël · ticket n° ${pad4(t.no)}`); }
+      catch (e) { Object.assign(m, { busy: false, step: 'code', msg: 'Pas de connexion à Crédit Domestique.', warn: true }); return render(); }
+      if (S.modal !== m) return;
+      m.busy = false; m.msg = 'En attente du téléphone…'; SOUND.copain(); render();
+      m.timer = setInterval(() => creditPoll(m), 2000);
+    },
+    async creditCancel() {
+      const m = S.modal; stopWait(m);
+      if (m && m.chargeId) {
+        try {
+          await CR.cancel(m.chargeId);
+          if ((await CR.status(m.chargeId)) === 'accepted') return creditAccepted(m); // accepté juste avant d'annuler
+        } catch (e) { /* hors ligne : la demande reste en attente dans Crédit Domestique */ }
+      }
+      if (S.modal === m) { S.modal = null; render(); }
+    },
     creditKey(k) {
       const m = S.modal; if (!m || m.busy) return;
       if (/^\d$/.test(k) && m.pin.length < 4) m.pin += k;
@@ -1358,7 +1413,7 @@
     if ((e.target.id === 'shop-email' || e.target.id === 'shop-pass') && e.key === 'Enter' && !(S.shop && S.shop.busy)) A.shopSignIn();
   }, true);
   $stage.addEventListener('click', e => {
-    if (e.target === $modal && S.modal && S.modal.type !== 'oups') { S.modal = null; render(); return; }
+    if (e.target === $modal && S.modal && S.modal.type !== 'oups') { A.closeModal(); return; }
     const el = e.target.closest('[data-a]');
     if (!el || el.disabled) return;
     const fn = A[el.dataset.a];
